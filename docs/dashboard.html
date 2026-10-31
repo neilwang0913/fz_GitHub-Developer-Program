@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GitHub Dashboard</title>
+  <style>
+    :root{--bd:#d1d9e0;--mut:#59636e;--bg:#f6f8fa}
+    body{font-family:system-ui,sans-serif;max-width:960px;margin:0 auto;padding:1.5rem;color:#1f2328}
+    form{display:flex;gap:.5rem;margin-bottom:1rem}
+    input{flex:1;padding:.5rem;border:1px solid var(--bd);border-radius:6px}
+    button{padding:.5rem 1rem;border:0;border-radius:6px;background:#1f883d;color:#fff;cursor:pointer}
+    .profile{display:flex;gap:1rem;align-items:center;margin-bottom:1rem}
+    .profile img{width:72px;height:72px;border-radius:50%}
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.75rem;margin-bottom:1.5rem}
+    .card{border:1px solid var(--bd);border-radius:8px;padding:.75rem;background:var(--bg)}
+    .card b{display:block;font-size:1.5rem}
+    .card span,.mut{color:var(--mut);font-size:.85rem}
+    .bar{display:flex;height:12px;border-radius:6px;overflow:hidden;margin:.5rem 0}
+    .legend span{margin-right:1rem;font-size:.85rem}
+    .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px}
+    table{width:100%;border-collapse:collapse}
+    th,td{text-align:left;padding:.4rem;border-bottom:1px solid var(--bd)}
+    th{cursor:pointer}
+    #err{color:#d1242f}
+  </style>
+</head>
+<body>
+  <h1>GitHub Dashboard</h1>
+  <form id="f">
+    <input id="u" placeholder="GitHub username" value="octocat" required>
+    <button>Load</button>
+  </form>
+  <p id="err"></p>
+  <div id="out" hidden>
+    <div class="profile"><img id="av" alt=""><div><h2 id="nm" style="margin:0"></h2><div class="mut" id="bio"></div></div></div>
+    <div class="cards" id="cards"></div>
+    <h3>Languages</h3>
+    <div class="bar" id="bar"></div><div class="legend" id="legend"></div>
+    <h3>Repositories <span class="mut">(click a header to sort)</span></h3>
+    <table>
+      <thead><tr><th data-k="name">Name</th><th data-k="stargazers_count">Stars</th><th data-k="forks_count">Forks</th><th data-k="language">Language</th><th data-k="pushed_at">Updated</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+<script>
+const $ = (id) => document.getElementById(id);
+const COLORS = ["#0969da","#1f883d","#bf8700","#cf222e","#8250df","#bc4c00","#0550ae","#6e7781"];
+let repos = [], sortKey = "stargazers_count", asc = false;
+
+async function gh(path) {
+  const res = await fetch("https://api.github.com" + path, {
+    headers: { Accept: "application/vnd.github+json" },
+  });
+  if (res.status === 404) throw new Error("User not found");
+  if (res.status === 403) throw new Error("Rate limit reached, try again later");
+  if (!res.ok) throw new Error("GitHub API error " + res.status);
+  return res.json();
+}
+
+function card(label, value) {
+  const d = document.createElement("div");
+  d.className = "card";
+  const b = document.createElement("b"); b.textContent = value;
+  const s = document.createElement("span"); s.textContent = label;
+  d.append(b, s);
+  return d;
+}
+
+function renderRows() {
+  const sorted = [...repos].sort((a, b) => {
+    const x = a[sortKey] ?? "", y = b[sortKey] ?? "";
+    return (x > y ? 1 : x < y ? -1 : 0) * (asc ? 1 : -1);
+  });
+  $("rows").replaceChildren(...sorted.map((r) => {
+    const tr = document.createElement("tr");
+    const name = document.createElement("td");
+    const a = document.createElement("a");
+    a.href = r.html_url; a.textContent = r.name; a.target = "_blank"; a.rel = "noopener";
+    name.append(a);
+    const cells = [r.stargazers_count, r.forks_count, r.language || "-", r.pushed_at.slice(0, 10)].map((t) => {
+      const td = document.createElement("td"); td.textContent = t; return td;
+    });
+    tr.append(name, ...cells);
+    return tr;
+  }));
+}
+
+function render(user) {
+  $("av").src = user.avatar_url;
+  $("nm").textContent = user.name || user.login;
+  $("bio").textContent = user.bio || "";
+  const stars = repos.reduce((n, r) => n + r.stargazers_count, 0);
+  const forks = repos.reduce((n, r) => n + r.forks_count, 0);
+  $("cards").replaceChildren(
+    card("Public repos", user.public_repos), card("Followers", user.followers),
+    card("Following", user.following), card("Stars (loaded repos)", stars), card("Forks (loaded repos)", forks));
+
+  const langs = {};
+  repos.forEach((r) => r.language && (langs[r.language] = (langs[r.language] || 0) + 1));
+  const entries = Object.entries(langs).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const total = entries.reduce((n, e) => n + e[1], 0) || 1;
+  $("bar").replaceChildren(...entries.map(([l, c], i) => {
+    const d = document.createElement("div");
+    d.style.cssText = `width:${(c / total) * 100}%;background:${COLORS[i]}`; d.title = l;
+    return d;
+  }));
+  $("legend").replaceChildren(...entries.map(([l, c], i) => {
+    const s = document.createElement("span");
+    const dot = document.createElement("i"); dot.className = "dot"; dot.style.background = COLORS[i];
+    s.append(dot, `${l} (${c})`);
+    return s;
+  }));
+  renderRows();
+  $("out").hidden = false;
+}
+
+$("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("err").textContent = ""; $("out").hidden = true;
+  const login = encodeURIComponent($("u").value.trim());
+  try {
+    const [user, list] = await Promise.all([gh(`/users/${login}`), gh(`/users/${login}/repos?per_page=100&sort=updated`)]);
+    repos = list;
+    render(user);
+  } catch (err) { $("err").textContent = err.message; }
+});
+
+document.querySelectorAll("th").forEach((th) => th.addEventListener("click", () => {
+  const k = th.dataset.k;
+  asc = k === sortKey ? !asc : k === "name";
+  sortKey = k;
+  renderRows();
+}));
+
+$("f").requestSubmit();
+</script>
+</body>
+</html>
